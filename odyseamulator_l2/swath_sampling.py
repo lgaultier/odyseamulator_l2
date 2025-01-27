@@ -49,6 +49,33 @@ def getBearing(latitude, longitude):
 
     return t
 
+
+def llh_to_ecef(lon, lat, h):
+    """" Go from lon, lat height to ECEF geocentric
+    Parameters
+    ----------
+    lon: float or array_like
+         longitude coordinate
+    lat: float or array_like
+         latitude coordinate
+    h: float or array_like
+             height
+    Returns
+    x, y, z
+    --------
+    """
+    rlat = np.deg2rad(lat)
+    rlon = np.deg2rad(lon)
+    e2 = WGS84.ECCENTRICITY_SQ
+    a = WGS84.SEMIMAJOR_AXIS
+    n = WGS84.eastRad(rlat)
+
+    x = (n + h) * np.cos(rlat) * np.cos(rlon)
+    y = (n + h) * np.cos(rlat) * np.sin(rlon)
+    z = (n * (1 - e2) + h) * np.sin(rlat)
+    return x, y, z
+
+
 def ecef_to_llh(x, y, z):
     """Go from ECEF geocentric to lat lon height.
     Parameters
@@ -134,7 +161,8 @@ class WGS84:
 class OdyseaSwath:
 
     def __init__(self, orbit_fname='orbit_out_2020_2023_height590km.npz',
-                 config_fname='wacm_sampling_config.py', year_ref=2020):
+                 config_fname='wacm_sampling_config.py', year_ref=2020,
+                 ecef=True, alt=650000):
 
         """
         Initialize an OdyseaSwath object. Eventaully, this will contain configuration etc. TODO..
@@ -163,7 +191,7 @@ class OdyseaSwath:
             import odyseamulator_l2
             config_fname = os.path.join(import_resources.files(odyseamulator_l2),config_fname)
 
-        self.loadOrbitXYZ(fn=orbit_fname, year_ref=year_ref)
+        self.loadOrbitXYZ(fn=orbit_fname, year_ref=year_ref, ecef=ecef,alt=alt)
         self.config_fname=config_fname
 
     def getOrbitSwath(self, orbit_x, orbit_y, orbit_z, orbit_time_stamp,
@@ -259,6 +287,7 @@ class OdyseaSwath:
                             'add_offset':90},
                     "sample_time": {"dtype": "float64", "zlib": True,
                                     'complevel': 9, '_FillValue':-9999,
+                                    'units': 'seconds since 1970-01-01',
                                     #},
                                     'least_significant_digit':1},
                     "swath_blanking": {"dtype": "int16", "zlib": True,
@@ -289,7 +318,7 @@ class OdyseaSwath:
 
         ds = ds.assign({'sample_time': ([ 'along_track', 'cross_track'],
                                         np.array(sample_time_track_dt),
-                                        ),
+                                        ATTR_COORD['sample_time']),
                        'lat': (['along_track', 'cross_track'],
                                np.array(sample_lat_track,dtype='float32'),
                                ATTR_COORD['lat']),
@@ -339,22 +368,35 @@ class OdyseaSwath:
         return ds
 
     def loadOrbitXYZ(self, fn='orbit_out_2020_2023_height590km.npz',
-                     year_ref=2020):
-        if 'txt' in os.path.splitext(fn)[-1]:
-            orbit_out = np.loadtxt(fn, delimiter=" ",
-                                   usecols=(0, 1, 2, 3, 4, 5, 6))
-            time = orbit_out[:, 0]
-            year = 1950 - (2031 - year_ref)
-            dd = [(datetime.datetime(year, 1, 1) + datetime.timedelta(days=x)) for x in time]
+                     year_ref=2020, ecef=True, alt=650000):
+        if 'txt' in os.path.splitext(fn)[-1] and year_ref != 0:
+            if ecef is False:
+                orbit_out = np.loadtxt(fn, delimiter=" ",
+                                       usecols=(0, 1, 2))
+                time = orbit_out[:, 2]
+                dd = [(datetime.datetime(year_ref, 1, 1) + datetime.timedelta(seconds=x)) for x in time]
+                lon = orbit_out[:, 0]
+                lat = orbit_out[:, 1]
+                x, y, z = llh_to_ecef(lon, lat, alt)
+                self.coarse_x = x
+                self.coarse_y = y
+                self.coarse_z = z
+            else:
+                orbit_out = np.loadtxt(fn, delimiter=" ",
+                                       usecols=(0, 1, 2, 3, 4, 5, 6))
+                time = orbit_out[:, 0]
+                self.coarse_x = orbit_out[:, 1]
+                self.coarse_y = orbit_out[:, 2]
+                self.coarse_z = orbit_out[:, 3]
+                year = 1950 - (2031 - year_ref)
+                dd = [(datetime.datetime(year, 1, 1) + datetime.timedelta(days=x)) for x in time]
             t2 = [(ddx - datetime.datetime(1970, 1, 1)).total_seconds() for ddx in dd]
 
             self.time_stamp_vector_coarse = np.array(t2)
 
-            self.coarse_x = orbit_out[:, 1]
-            self.coarse_y = orbit_out[:, 2]
-            self.coarse_z = orbit_out[:, 3]
             lat, _, _  = ecef_to_llh(self.coarse_x, self.coarse_y,
                                      self.coarse_z)
+            lat = np.rad2deg(lat)
             dlat = np.diff(lat)
             pole_crossing = np.where(np.diff(np.sign(dlat)))[0]
             pole_crossing = pole_crossing + 1
@@ -364,7 +406,9 @@ class OdyseaSwath:
             dy2 = (self.coarse_y[1:] - self.coarse_y[:-1])**2
             dz2 = (self.coarse_z[1:] - self.coarse_z[:-1])**2
             self.coarse_s[1:] = np.cumsum(np.sqrt(dx2 + dy2 + dz2))
-
+        elif 'txt' in os.path.splitext(fn)[-1] and year_ref == 0:
+            # lon, lat, time
+            orbit_out = np.loadtxt(fn, delimiter=" ",usecols=(0, 1, 2,))
         else:
             orbit_out = np.load(fn)
 

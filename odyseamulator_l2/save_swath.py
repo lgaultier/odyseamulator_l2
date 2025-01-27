@@ -59,6 +59,8 @@ def init_parameters(params):
     params.var_current = getattr(params, 'var_current', ('SSU', 'SSV'))
     params.dic_coord = getattr(params, 'dic_coord', {})
     params.dic_coord_wind = getattr(params, 'dic_coord_wind', {})
+    params.ecef = getattr(params, 'ecef', True)
+    params.altitude = getattr(params, 'a;titude', 650000)
     return None
 
 
@@ -134,7 +136,8 @@ def run(parameter_file:str, first_cycle: int, last_cycle: int):
     if not os.path.exists(save_file):
         yorbits = load_orbit(params.orbit_file, params.config_file,
                               params.start_time, params.end_time,
-                              year_ref=params.year_ref,
+                              year_ref=params.year_ref, ecef=params.ecef,
+                              alt=params.altitude,
                               bounding_box=params.bounding_box)
         #list_orbit = [o for o in itertools.islice(yorbits, 0, 500)]
         list_orbit = [o for o in itertools.islice(yorbits, 0, 50000)]
